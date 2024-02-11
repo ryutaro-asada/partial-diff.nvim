@@ -42,8 +42,6 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim)
   },
 ```
 
-Once you have the module installed, you can add the commands to your Neovim configuration file.
-
 ## Contributing
 
 If you have any suggestions or improvements, feel free to open an issue or submit a pull request.
