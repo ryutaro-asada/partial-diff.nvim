@@ -1,6 +1,12 @@
 # partial-diff.nvim
 
 This repository contains a set of commands for Neovim that allow you to perform partial diffs on your code.
+## demo
+
+
+https://github.com/ryutaro-asada/partial-diff.nvim/assets/58899265/6eaae6a9-2ecb-489e-8d38-c4bd9ff41690
+
+
 
 ## Commands
 
