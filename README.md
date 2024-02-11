@@ -28,10 +28,12 @@ To delete the current diff, use the `PartialDiffDelete` command.
 
 ## Installation
 
-To install the `partial-diff` Lua module, you can use your preferred Lua package manager. For example, if you're using `luarocks`, you can install it like this:
+Using [lazy.nvim](https://github.com/folke/lazy.nvim)
 
-```bash
-luarocks install partial-diff
+```lua
+  {
+    "ryutaro-asada/partial-diff.nvim",
+  },
 ```
 
 Once you have the module installed, you can add the commands to your Neovim configuration file.
