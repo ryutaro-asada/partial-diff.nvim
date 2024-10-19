@@ -7,11 +7,11 @@ M.buf_a = nil
 M.buf_b = nil
 
 M.partial_diff_a = function(start_line, end_line)
-  M.a = api.nvim_buf_get_lines(0, start_line-1, end_line, false)
+  M.a = api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
 end
 
 M.partial_diff_b = function(start_line, end_line)
-  M.b = api.nvim_buf_get_lines(0, start_line-1, end_line, false)
+  M.b = api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
 
   -- Create two new buffers
   M.buf_a = api.nvim_create_buf(false, true)
@@ -24,10 +24,13 @@ M.partial_diff_b = function(start_line, end_line)
   -- Open the buffers in new split windows
   api.nvim_command('vnew +' .. 'setl\\ buftype=nofile | buffer ' .. M.buf_a) -- A buffer
   local win_a = api.nvim_get_current_win()
-  
+
   api.nvim_command('vsplit +' .. 'setl\\ buftype=nofile | buffer ' .. M.buf_b) -- B buffer
   local win_b = api.nvim_get_current_win()
 
+  -- api.nvim_set_option('diffopt', 'filler,iwhite,algorithm:myers')
+  -- api.nvim_set_option('diffopt', 'filler,iwhite,algorithm:histogram')
+  api.nvim_set_option('diffopt', 'internal,filler,algorithm:histogram,indent-heuristic')
   -- Start diff mode for each window
   api.nvim_win_set_option(win_a, 'diff', true)
   api.nvim_win_set_option(win_b, 'diff', true)
