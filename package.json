@@ -1,0 +1,7 @@
+{
+	"name": "partial-diff-vscode-runner",
+	"version": "1.0.0",
+	"dependencies": {
+		"vscode-diff": "^2.1.1"
+	}
+}
