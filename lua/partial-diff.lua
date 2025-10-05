@@ -245,7 +245,7 @@ M.apply_diff_highlights = function(lines_from, lines_to)
       return byte_idx
     else
       -- Fallback if character position is out of range
-      return #line_str
+      return math.min(#line_str, (char_pos > 1) and #line_str or 0)
     end
   end
 
