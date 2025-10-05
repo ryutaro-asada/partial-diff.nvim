@@ -8,6 +8,11 @@ A Neovim plugin for performing partial diffs on selected code regions with advan
 
 ## Demo
 
+
+https://github.com/user-attachments/assets/fcd3acfd-855b-4b54-a988-6bd2371344ba
+
+
+
 https://github.com/ryutaro-asada/partial-diff.nvim/assets/58899265/6eaae6a9-2ecb-489e-8d38-c4bd9ff41690
 
 ## Installation
@@ -20,7 +25,7 @@ https://github.com/ryutaro-asada/partial-diff.nvim/assets/58899265/6eaae6a9-2ecb
   },
 ```
 
-### configuration
+## Configuration
 
 ```lua
 require('partial-diff').setup({
@@ -103,15 +108,6 @@ Without this, the plugin will fall back to Neovim's built-in diff.
 
 " Close the diff when done
 :PartialDiffDelete
-```
-
-## Configuration
-
-```lua
-require("partial-diff").setup({
-  debug = false,  -- Enable debug logging
-  log_file_path = vim.fn.stdpath('cache') .. '/partial-diff.log',  -- Custom log path
-})
 ```
 
 ## Powered By
