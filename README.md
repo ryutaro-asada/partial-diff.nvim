@@ -1,5 +1,9 @@
 # partial-diff.nvim
 
+[![Dotfyle](https://dotfyle.com/plugins/ryutaro-asada/partial-diff.nvim/shield)](https://dotfyle.com/plugins/ryutaro-asada/partial-diff.nvim)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+
 A Neovim plugin for performing partial diffs on selected code regions with advanced character-level diff highlighting powered by VSCode's diff algorithm.
 
 ## Features
