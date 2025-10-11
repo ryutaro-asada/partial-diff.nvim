@@ -29,6 +29,16 @@ https://github.com/ryutaro-asada/partial-diff.nvim/assets/58899265/6eaae6a9-2ecb
   },
 ```
 
+### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
+
+```lua
+use {
+  'ryutaro-asada/partial-diff.nvim',
+  config = function()
+    require('partial-diff').setup()
+  end
+}
+```
 ## Configuration
 
 ```lua
@@ -114,7 +124,7 @@ Without this, the plugin will fall back to Neovim's built-in diff.
 :PartialDiffDelete
 ```
 
-## Powered By
+## Using
 
 - [vscode-diff](https://github.com/micnil/vscode-diff) - Advanced character-level diff computation
 
