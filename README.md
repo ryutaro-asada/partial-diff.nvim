@@ -1,6 +1,5 @@
 # partial-diff.nvim
 
-[![Dotfyle](https://dotfyle.com/plugins/ryutaro-asada/partial-diff.nvim/shield)](https://dotfyle.com/plugins/ryutaro-asada/partial-diff.nvim)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 
