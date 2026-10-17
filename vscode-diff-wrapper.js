@@ -32,7 +32,9 @@ async function main() {
     // VSCode partial-diff default settings
     const diffOptions = {
       ignoreTrimWhitespace: options.ignoreTrimWhitespace || false,
-      computeMoves: false,  // Better for indentation changes
+      // computeMoves defaults to false (better for indentation changes),
+      // but respect an explicit value from the caller.
+      computeMoves: options.computeMoves === true,
       maxComputationTimeMs: options.maxComputationTimeMs || 5000
     };
     

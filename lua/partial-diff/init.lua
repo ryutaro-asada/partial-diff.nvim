@@ -12,6 +12,7 @@ M.original_diffopt = nil
 
 M.from_original = {}
 M.to_original = {}
+M.has_from = false
 
 M.debug = false
 M.log_file = nil
@@ -102,14 +103,19 @@ M.get_plugin_root = function()
   if source:sub(1, 1) == "@" then
     source = source:sub(2)
   end
-  return fn.fnamemodify(source, ":h:h")
+  -- Resolve to an absolute path first so that a relative 'runtimepath'
+  -- entry (e.g. ".") does not produce a broken plugin root. The file lives
+  -- at <root>/lua/partial-diff/init.lua, so strip three path components.
+  return fn.fnamemodify(source, ":p:h:h:h")
 end
 
 M.check_vscode_diff = function()
   local plugin_root = M.get_plugin_root()
   local wrapper_script = plugin_root .. '/vscode-diff-wrapper.js'
-  local node_modules = plugin_root .. '/node_modules'
-  return fn.filereadable(wrapper_script) == 1 and fn.isdirectory(node_modules) == 1
+  -- Check for the actual vscode-diff package rather than just the
+  -- node_modules directory, which may exist but be empty/incomplete.
+  local vscode_diff_pkg = plugin_root .. '/node_modules/vscode-diff/package.json'
+  return fn.filereadable(wrapper_script) == 1 and fn.filereadable(vscode_diff_pkg) == 1
 end
 
 M.check_node = function()
@@ -165,23 +171,18 @@ M.run_vscode_diff = function(lines_from, lines_to, options)
     options = options or {}
   }
 
-  local temp_file = fn.tempname()
-  local f = io.open(temp_file, 'w')
-  if not f then
-    return nil
-  end
-
   local input_json = fn.json_encode(input_data)
-  f:write(input_json)
-  f:close()
 
-  local cmd = string.format('cd %s && cat %s | node vscode-diff-wrapper.js 2>/dev/null',
-    fn.shellescape(plugin_root), fn.shellescape(temp_file))
-
-  local result = fn.system(cmd)
-  os.remove(temp_file)
+  -- Call node directly with the wrapper script as an argument and feed the
+  -- JSON payload via stdin. Using the list form of vim.fn.system avoids
+  -- shell interpretation (no quoting/injection issues) and does not depend
+  -- on the current working directory.
+  local result = fn.system({ 'node', wrapper_script }, input_json)
 
   if vim.v.shell_error ~= 0 then
+    if M.debug then
+      M.log("vscode-diff-wrapper exited with error: " .. tostring(result))
+    end
     return nil
   end
 
@@ -189,6 +190,9 @@ M.run_vscode_diff = function(lines_from, lines_to, options)
   if success then
     return data
   else
+    if M.debug then
+      M.log("Failed to decode vscode-diff output: " .. tostring(result))
+    end
     return nil
   end
 end
@@ -200,21 +204,22 @@ M.apply_diff_highlights = function(lines_from, lines_to)
 
   local result = M.run_vscode_diff(lines_from, lines_to, {
     ignoreTrimWhitespace = false,
-    computeMoves = true,
+    -- moves are not consumed by the highlighter, so skip computing them
+    computeMoves = false,
   })
 
   if not result or not result.success then
     if M.debug then
       M.log("VSCode diff failed, falling back to Neovim diff")
     end
-    api.nvim_win_set_option(M.win_from, 'diff', true)
-    api.nvim_win_set_option(M.win_to, 'diff', true)
+    vim.wo[M.win_from].diff = true
+    vim.wo[M.win_to].diff = true
     vim.cmd('diffupdate')
     return false
   end
 
-  api.nvim_win_set_option(M.win_from, 'diff', false)
-  api.nvim_win_set_option(M.win_to, 'diff', false)
+  vim.wo[M.win_from].diff = false
+  vim.wo[M.win_to].diff = false
 
   local namespaces = {
     line = api.nvim_create_namespace('partial_diff_line'),
@@ -231,21 +236,29 @@ M.apply_diff_highlights = function(lines_from, lines_to)
     M.log(string.format("Processing %d change block(s)", #result.changes))
   end
 
-  -- Convert character position (1-based) to byte offset (0-based)
-  -- VSCode uses character positions, Neovim uses byte offsets
+  -- Convert a VSCode column (1-based) to a Neovim byte offset (0-based).
+  -- VSCode columns are counted in UTF-16 code units, whereas Neovim's
+  -- extmark/highlight APIs expect byte offsets. We therefore ask
+  -- vim.str_byteindex to interpret the index as UTF-16.
   local function char_to_byte_offset(line_str, char_pos)
     if char_pos <= 1 then
       return 0
     end
 
-    -- Use vim.str_byteindex for UTF-8 aware conversion
-    -- char_pos is 1-based, vim.str_byteindex expects 0-based character index
-    local ok, byte_idx = pcall(vim.str_byteindex, line_str, char_pos - 1)
-    if ok then
+    local utf16_index = char_pos - 1
+
+    -- Neovim 0.11+ signature: str_byteindex(s, encoding, index[, strict])
+    local ok, byte_idx = pcall(vim.str_byteindex, line_str, 'utf-16', utf16_index, false)
+    if not ok then
+      -- Neovim 0.10 signature: str_byteindex(s, index[, use_utf16])
+      ok, byte_idx = pcall(vim.str_byteindex, line_str, utf16_index, true)
+    end
+
+    if ok and byte_idx then
       return byte_idx
     else
-      -- Fallback if character position is out of range
-      return math.min(#line_str, (char_pos > 1) and #line_str or 0)
+      -- Fallback: clamp to end of line if the position is out of range
+      return #line_str
     end
   end
 
@@ -374,16 +387,9 @@ M.apply_diff_highlights = function(lines_from, lines_to)
             lines_to, 'DiffText')
         end
       end
-    else
-      if M.debug then
-        M.log("  No inner changes, highlighting entire lines")
-      end
-      for line = orig_start - 1, orig_end - 1 do
-        highlight_line(M.buf_from, namespaces.line, line, lines_from, 'DiffChange')
-      end
-      for line = mod_start - 1, mod_end - 1 do
-        highlight_line(M.buf_to, namespaces.line, line, lines_to, 'DiffChange')
-      end
+    elseif M.debug then
+      -- No inner changes: the line-level highlights applied above are sufficient.
+      M.log("  No inner changes, line-level highlight only")
     end
   end
 
@@ -428,10 +434,20 @@ end
 
 M.partial_diff_from = function(start_line, end_line)
   M.from_original = api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
+  M.has_from = true
   print("Stored " .. #M.from_original .. " lines in From buffer")
 end
 
 M.partial_diff_to = function(start_line, end_line)
+  -- Require a source range to have been marked first
+  if not M.has_from then
+    api.nvim_echo({ {
+      "[PartialDiff] No source range marked. Run :PartialDiffFrom first.",
+      "ErrorMsg",
+    } }, true, {})
+    return
+  end
+
   -- Clean up existing diff if present
   if M.buf_from and api.nvim_buf_is_valid(M.buf_from) then
     M.partial_diff_delete()
@@ -471,8 +487,8 @@ M.partial_diff_to = function(start_line, end_line)
 
   local original_ft = vim.bo.filetype
   if original_ft and original_ft ~= "" then
-    api.nvim_buf_set_option(M.buf_from, 'filetype', original_ft)
-    api.nvim_buf_set_option(M.buf_to, 'filetype', original_ft)
+    vim.bo[M.buf_from].filetype = original_ft
+    vim.bo[M.buf_to].filetype = original_ft
   end
 
   -- Auto cleanup when tab is closed
@@ -493,8 +509,8 @@ M.partial_diff_to = function(start_line, end_line)
     print("Using Neovim diff (install Node.js and run :PartialDiffInstallVSCode for better character-level diff)")
 
     vim.o.diffopt = "internal,filler,closeoff,hiddenoff,algorithm:patience,context:3,indent-heuristic"
-    api.nvim_win_set_option(M.win_from, 'diff', true)
-    api.nvim_win_set_option(M.win_to, 'diff', true)
+    vim.wo[M.win_from].diff = true
+    vim.wo[M.win_to].diff = true
     vim.cmd('diffupdate')
   end
 end
@@ -537,6 +553,7 @@ M.partial_diff_delete = function()
 
   M.from_original = {}
   M.to_original = {}
+  M.has_from = false
 end
 
 M.setup = function(opts)
