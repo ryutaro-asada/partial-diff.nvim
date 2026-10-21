@@ -29,6 +29,7 @@ last code line of that block to select it.
 | `04_whitespace.js` | **Trim-whitespace option** — indentation-only changes | toggle `diff.ignore_trim_whitespace` |
 | `05_histogram.js` | Repeated lines (`}`, blank lines) — histogram vs patience | fallback diff (no Node.js) |
 | `06_long_line.rb` | Wide, (almost) single-line lists — multiple mid-line edits | default settings |
+| `07_inline_move.rb` | Reordering *within* a single line (intra-line move) | default settings |
 | `demo.rb` | ~10-item Ruby list where a few entries move/change | default; also try `compute_moves` |
 
 ## Recommended setup to see everything
@@ -46,3 +47,9 @@ Run `03_moves.js` once with `compute_moves = false` and once with `true` to
 feel the difference: with it off the moved block shows up as a big delete+add;
 with it on it is highlighted as a move with a `↑ moved from line N` /
 `↓ moved to line N` marker.
+
+Note on `07_inline_move.rb`: move detection (`compute_moves`) works at the
+*line* level, so reordering elements within a single line is not reported as a
+move. Instead the reordered text shows up as character-level delete (on the
+FROM side) and add (on the TO side) — which is still exactly what you want to
+see for an intra-line reorder.
