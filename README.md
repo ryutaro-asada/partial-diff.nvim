@@ -8,6 +8,10 @@ A Neovim plugin for performing partial diffs on selected code regions with advan
 ## Features
 
 - 🎯 **Partial Diff**: Compare any two selected regions of code
+- 🔤 **Character-level highlighting**: Powered by VSCode's diff algorithm
+- 🔀 **Move detection** (optional): Recognize moved code blocks instead of showing them as unrelated changes
+- 🧹 **Whitespace-aware** (optional): Ignore pure indentation / trailing-space changes
+- 📐 **Histogram fallback**: Cleaner built-in diff when the VSCode algorithm is unavailable
 
 ## Demo
 
@@ -44,6 +48,22 @@ use {
 require('partial-diff').setup({
   -- Debug options
   debug = false,
+  -- Diff computation options
+  diff = {
+    -- Ignore leading/trailing whitespace differences (vscode-diff).
+    -- Set to true to hide pure indentation / trailing-space changes.
+    ignore_trim_whitespace = false,
+    -- Detect moved code blocks (vscode-diff). When enabled, moved blocks are
+    -- highlighted with the `line_move` group and marked with virtual text
+    -- pointing to their counterpart location, instead of being shown as a
+    -- change.
+    compute_moves = false,
+    -- diffopt used for the built-in Neovim diff fallback (when Node.js /
+    -- vscode-diff are unavailable). Defaults to the histogram algorithm with
+    -- linematch for cleaner results on refactored code.
+    fallback_diffopt =
+      "internal,filler,closeoff,hiddenoff,algorithm:histogram,linematch:60,context:3,indent-heuristic",
+  },
   -- Highlight customization
   highlights = {
     -- Link to existing highlight groups
@@ -66,6 +86,11 @@ require('partial-diff').setup({
       bg = '#4a4a0e',
       fg = '#ffd866',
       bold = true
+    },
+    -- Highlight for moved blocks (used when diff.compute_moves = true)
+    line_move = {
+      bg = '#2d3a5a',
+      fg = '#78a9ff',
     }
   }
 })
