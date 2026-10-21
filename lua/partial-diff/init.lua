@@ -18,6 +18,26 @@ M.debug = false
 M.log_file = nil
 M.log_file_path = fn.stdpath('cache') .. '/partial-diff.log'
 
+-- Diff computation options
+M.diff = {
+  -- Ignore leading/trailing whitespace differences (vscode-diff).
+  ignore_trim_whitespace = false,
+  -- Detect moved code blocks (vscode-diff). Enables the `moves` output and
+  -- a dedicated "moved" highlight/marker instead of change highlighting.
+  compute_moves = false,
+  -- Keep the From/To windows scroll- and cursor-synced (like diff mode).
+  -- Applies to the vscode-diff path; the built-in diff fallback already
+  -- syncs scrolling on its own.
+  sync_scroll = true,
+  -- When sync_scroll is on, also turn off 'wrap' in both windows so that
+  -- horizontal scrolling actually happens (and stays mirrored). Set to
+  -- false to keep your wrap setting at the cost of no horizontal sync.
+  sync_scroll_nowrap = true,
+  -- diffopt used for the built-in Neovim diff fallback.
+  fallback_diffopt =
+  "internal,filler,closeoff,hiddenoff,algorithm:histogram,linematch:60,context:3,indent-heuristic",
+}
+
 -- Default highlight colors
 M.highlights = {
   line_change = { bg = nil, fg = nil, link = 'DiffChange' },
@@ -26,6 +46,7 @@ M.highlights = {
   char_change = { bg = nil, fg = nil, link = 'DiffText' },
   char_add = { bg = '#2d5a2d', fg = '#a9dc76', link = nil },
   char_delete = { bg = '#5a2d2d', fg = '#ff6188', link = nil },
+  line_move = { bg = '#2d3a5a', fg = '#78a9ff', link = nil },
 }
 
 -- Setup highlight groups based on user configuration
@@ -37,6 +58,7 @@ M.setup_highlights = function()
     { name = 'PartialDiffCharChange', config = M.highlights.char_change },
     { name = 'PartialDiffCharAdd',    config = M.highlights.char_add },
     { name = 'PartialDiffCharDelete', config = M.highlights.char_delete },
+    { name = 'PartialDiffLineMove',   config = M.highlights.line_move },
   }
 
   for _, group in ipairs(groups) do
@@ -203,9 +225,8 @@ M.apply_diff_highlights = function(lines_from, lines_to)
   end
 
   local result = M.run_vscode_diff(lines_from, lines_to, {
-    ignoreTrimWhitespace = false,
-    -- moves are not consumed by the highlighter, so skip computing them
-    computeMoves = false,
+    ignoreTrimWhitespace = M.diff.ignore_trim_whitespace,
+    computeMoves = M.diff.compute_moves,
   })
 
   if not result or not result.success then
@@ -225,6 +246,7 @@ M.apply_diff_highlights = function(lines_from, lines_to)
     line = api.nvim_create_namespace('partial_diff_line'),
     char = api.nvim_create_namespace('partial_diff_char'),
     indent = api.nvim_create_namespace('partial_diff_indent'),
+    move = api.nvim_create_namespace('partial_diff_move'),
   }
 
   for _, ns in pairs(namespaces) do
@@ -393,6 +415,93 @@ M.apply_diff_highlights = function(lines_from, lines_to)
     end
   end
 
+  -- Render detected moves (only populated when compute_moves is enabled).
+  if M.diff.compute_moves and result.moves and #result.moves > 0 then
+    if M.debug then
+      M.log(string.format("Processing %d move(s)", #result.moves))
+    end
+
+    for move_idx, move in ipairs(result.moves) do
+      local lrm = move.lineRangeMapping
+      if lrm and lrm.original and lrm.modified then
+        local orig_start = lrm.original.startLineNumber
+        local orig_end = lrm.original.endLineNumberExclusive - 1
+        local mod_start = lrm.modified.startLineNumber
+        local mod_end = lrm.modified.endLineNumberExclusive - 1
+
+        -- Highlight the moved block on both sides with the move group.
+        for line = orig_start, orig_end do
+          highlight_line(M.buf_from, namespaces.move, line - 1, lines_from, 'PartialDiffLineMove')
+        end
+        for line = mod_start, mod_end do
+          highlight_line(M.buf_to, namespaces.move, line - 1, lines_to, 'PartialDiffLineMove')
+        end
+
+        -- A moved block may also contain edits. vscode-diff reports these as
+        -- `move.changes` (with character-level `innerChanges`). Render them on
+        -- top of the move highlight so "moved + modified" is distinguishable
+        -- from a pure move.
+        if move.changes and #move.changes > 0 then
+          for _, mchange in ipairs(move.changes) do
+            if mchange.innerChanges and #mchange.innerChanges > 0 then
+              for _, inner in ipairs(mchange.innerChanges) do
+                local orig = inner.originalRange
+                local mod = inner.modifiedRange
+
+                local is_empty_orig = (orig.startColumn == orig.endColumn) and
+                    (orig.startLineNumber == orig.endLineNumber)
+                local is_empty_mod = (mod.startColumn == mod.endColumn) and
+                    (mod.startLineNumber == mod.endLineNumber)
+
+                if is_empty_orig and not is_empty_mod then
+                  highlight_range(M.buf_to, namespaces.char,
+                    mod.startLineNumber, mod.startColumn,
+                    mod.endLineNumber, mod.endColumn,
+                    lines_to, 'DiffAdd')
+                elseif not is_empty_orig and is_empty_mod then
+                  highlight_range(M.buf_from, namespaces.char,
+                    orig.startLineNumber, orig.startColumn,
+                    orig.endLineNumber, orig.endColumn,
+                    lines_from, 'DiffDelete')
+                elseif not is_empty_orig and not is_empty_mod then
+                  highlight_range(M.buf_from, namespaces.char,
+                    orig.startLineNumber, orig.startColumn,
+                    orig.endLineNumber, orig.endColumn,
+                    lines_from, 'DiffText')
+                  highlight_range(M.buf_to, namespaces.char,
+                    mod.startLineNumber, mod.startColumn,
+                    mod.endLineNumber, mod.endColumn,
+                    lines_to, 'DiffText')
+                end
+              end
+            end
+          end
+        end
+
+        -- Add a virtual-text marker pointing to the counterpart location.
+        if orig_start >= 1 and orig_start <= #lines_from then
+          api.nvim_buf_set_extmark(M.buf_from, namespaces.move, orig_start - 1, 0, {
+            virt_text = { { string.format(' ↓ moved to line %d', mod_start), 'PartialDiffLineMove' } },
+            virt_text_pos = 'eol',
+            priority = 250,
+          })
+        end
+        if mod_start >= 1 and mod_start <= #lines_to then
+          api.nvim_buf_set_extmark(M.buf_to, namespaces.move, mod_start - 1, 0, {
+            virt_text = { { string.format(' ↑ moved from line %d', orig_start), 'PartialDiffLineMove' } },
+            virt_text_pos = 'eol',
+            priority = 250,
+          })
+        end
+
+        if M.debug then
+          M.log(string.format("  Move %d: original %d-%d -> modified %d-%d",
+            move_idx, orig_start, orig_end, mod_start, mod_end))
+        end
+      end
+    end
+  end
+
   if M.debug then
     local summary = string.format("Diff complete: %d change block(s) processed", #result.changes)
     print(summary)
@@ -411,6 +520,45 @@ M.apply_diff_highlights = function(lines_from, lines_to)
   end
 
   return true
+end
+
+-- Keep the From/To windows scrolling (and cursor) in sync in the
+-- vscode-diff path, mimicking what diff mode does automatically.
+M.enable_scroll_sync = function()
+  if not M.diff.sync_scroll then
+    return
+  end
+  if not (M.win_from and api.nvim_win_is_valid(M.win_from)
+        and M.win_to and api.nvim_win_is_valid(M.win_to)) then
+    return
+  end
+
+  -- scrollbind needs 'ver' in scrollopt for vertical sync and 'hor' for
+  -- horizontal sync. Ensure both are present.
+  M.original_scrollopt = vim.o.scrollopt
+  local function ensure_scrollopt(flag)
+    if not string.find(vim.o.scrollopt, flag) then
+      vim.o.scrollopt = (vim.o.scrollopt == '' and flag) or (vim.o.scrollopt .. ',' .. flag)
+    end
+  end
+  ensure_scrollopt('ver')
+  ensure_scrollopt('hor')
+
+  for _, win in ipairs({ M.win_from, M.win_to }) do
+    vim.wo[win].scrollbind = true
+    vim.wo[win].cursorbind = true
+    -- Horizontal scrollbind only has an effect when lines are not wrapped;
+    -- with 'wrap' on there is no horizontal scroll to mirror.
+    if M.diff.sync_scroll_nowrap then
+      vim.wo[win].wrap = false
+    end
+  end
+
+  -- Align both windows to the top and resync their scroll positions.
+  api.nvim_win_call(M.win_from, function()
+    vim.cmd('normal! gg')
+    vim.cmd('syncbind')
+  end)
 end
 
 M.show_log = function()
@@ -505,10 +653,11 @@ M.partial_diff_to = function(start_line, end_line)
 
   if M.check_node() and M.check_vscode_diff() then
     M.apply_diff_highlights(M.from_original, M.to_original)
+    M.enable_scroll_sync()
   else
     print("Using Neovim diff (install Node.js and run :PartialDiffInstallVSCode for better character-level diff)")
 
-    vim.o.diffopt = "internal,filler,closeoff,hiddenoff,algorithm:patience,context:3,indent-heuristic"
+    vim.o.diffopt = M.diff.fallback_diffopt
     vim.wo[M.win_from].diff = true
     vim.wo[M.win_to].diff = true
     vim.cmd('diffupdate')
@@ -521,6 +670,11 @@ M.partial_diff_delete = function()
   if M.original_diffopt then
     vim.o.diffopt = M.original_diffopt
     M.original_diffopt = nil
+  end
+
+  if M.original_scrollopt ~= nil then
+    vim.o.scrollopt = M.original_scrollopt
+    M.original_scrollopt = nil
   end
 
   -- Close windows and tab
@@ -566,6 +720,15 @@ M.setup = function(opts)
   end
   if opts.log_file_path then
     M.log_file_path = opts.log_file_path
+  end
+
+  -- Diff computation settings
+  if opts.diff then
+    for key, value in pairs(opts.diff) do
+      if M.diff[key] ~= nil then
+        M.diff[key] = value
+      end
+    end
   end
 
   -- Highlight customization
