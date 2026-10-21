@@ -25,6 +25,10 @@ M.diff = {
   -- Detect moved code blocks (vscode-diff). Enables the `moves` output and
   -- a dedicated "moved" highlight/marker instead of change highlighting.
   compute_moves = false,
+  -- Keep the From/To windows scroll- and cursor-synced (like diff mode).
+  -- Applies to the vscode-diff path; the built-in diff fallback already
+  -- syncs scrolling on its own.
+  sync_scroll = true,
   -- diffopt used for the built-in Neovim diff fallback.
   fallback_diffopt =
   "internal,filler,closeoff,hiddenoff,algorithm:histogram,linematch:60,context:3,indent-heuristic",
@@ -514,6 +518,35 @@ M.apply_diff_highlights = function(lines_from, lines_to)
   return true
 end
 
+-- Keep the From/To windows scrolling (and cursor) in sync in the
+-- vscode-diff path, mimicking what diff mode does automatically.
+M.enable_scroll_sync = function()
+  if not M.diff.sync_scroll then
+    return
+  end
+  if not (M.win_from and api.nvim_win_is_valid(M.win_from)
+        and M.win_to and api.nvim_win_is_valid(M.win_to)) then
+    return
+  end
+
+  -- scrollbind needs 'ver' in scrollopt for vertical sync.
+  M.original_scrollopt = vim.o.scrollopt
+  if not string.find(vim.o.scrollopt, 'ver') then
+    vim.o.scrollopt = (vim.o.scrollopt == '' and 'ver') or (vim.o.scrollopt .. ',ver')
+  end
+
+  for _, win in ipairs({ M.win_from, M.win_to }) do
+    vim.wo[win].scrollbind = true
+    vim.wo[win].cursorbind = true
+  end
+
+  -- Align both windows to the top and resync their scroll positions.
+  api.nvim_win_call(M.win_from, function()
+    vim.cmd('normal! gg')
+    vim.cmd('syncbind')
+  end)
+end
+
 M.show_log = function()
   if fn.filereadable(M.log_file_path) == 1 then
     vim.cmd('split ' .. M.log_file_path)
@@ -606,6 +639,7 @@ M.partial_diff_to = function(start_line, end_line)
 
   if M.check_node() and M.check_vscode_diff() then
     M.apply_diff_highlights(M.from_original, M.to_original)
+    M.enable_scroll_sync()
   else
     print("Using Neovim diff (install Node.js and run :PartialDiffInstallVSCode for better character-level diff)")
 
@@ -622,6 +656,11 @@ M.partial_diff_delete = function()
   if M.original_diffopt then
     vim.o.diffopt = M.original_diffopt
     M.original_diffopt = nil
+  end
+
+  if M.original_scrollopt ~= nil then
+    vim.o.scrollopt = M.original_scrollopt
+    M.original_scrollopt = nil
   end
 
   -- Close windows and tab

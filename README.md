@@ -58,6 +58,10 @@ require('partial-diff').setup({
     -- pointing to their counterpart location, instead of being shown as a
     -- change.
     compute_moves = false,
+    -- Keep the From/To windows scroll- and cursor-synced (like diff mode).
+    -- Applies to the vscode-diff path; the built-in diff fallback already
+    -- syncs scrolling on its own.
+    sync_scroll = true,
     -- diffopt used for the built-in Neovim diff fallback (when Node.js /
     -- vscode-diff are unavailable). Defaults to the histogram algorithm with
     -- linematch for cleaner results on refactored code.
