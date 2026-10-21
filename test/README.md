@@ -28,6 +28,7 @@ last code line of that block to select it.
 | `03_moves.js` | **Move detection** — a block is moved, not changed | `diff.compute_moves = true` |
 | `04_whitespace.js` | **Trim-whitespace option** — indentation-only changes | toggle `diff.ignore_trim_whitespace` |
 | `05_histogram.js` | Repeated lines (`}`, blank lines) — histogram vs patience | fallback diff (no Node.js) |
+| `06_long_line.rb` | Wide, (almost) single-line lists — multiple mid-line edits | default settings |
 | `demo.rb` | ~10-item Ruby list where a few entries move/change | default; also try `compute_moves` |
 
 ## Recommended setup to see everything
