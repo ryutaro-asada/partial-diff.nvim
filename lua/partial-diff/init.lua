@@ -429,6 +429,47 @@ M.apply_diff_highlights = function(lines_from, lines_to)
           highlight_line(M.buf_to, namespaces.move, line - 1, lines_to, 'PartialDiffLineMove')
         end
 
+        -- A moved block may also contain edits. vscode-diff reports these as
+        -- `move.changes` (with character-level `innerChanges`). Render them on
+        -- top of the move highlight so "moved + modified" is distinguishable
+        -- from a pure move.
+        if move.changes and #move.changes > 0 then
+          for _, mchange in ipairs(move.changes) do
+            if mchange.innerChanges and #mchange.innerChanges > 0 then
+              for _, inner in ipairs(mchange.innerChanges) do
+                local orig = inner.originalRange
+                local mod = inner.modifiedRange
+
+                local is_empty_orig = (orig.startColumn == orig.endColumn) and
+                    (orig.startLineNumber == orig.endLineNumber)
+                local is_empty_mod = (mod.startColumn == mod.endColumn) and
+                    (mod.startLineNumber == mod.endLineNumber)
+
+                if is_empty_orig and not is_empty_mod then
+                  highlight_range(M.buf_to, namespaces.char,
+                    mod.startLineNumber, mod.startColumn,
+                    mod.endLineNumber, mod.endColumn,
+                    lines_to, 'DiffAdd')
+                elseif not is_empty_orig and is_empty_mod then
+                  highlight_range(M.buf_from, namespaces.char,
+                    orig.startLineNumber, orig.startColumn,
+                    orig.endLineNumber, orig.endColumn,
+                    lines_from, 'DiffDelete')
+                elseif not is_empty_orig and not is_empty_mod then
+                  highlight_range(M.buf_from, namespaces.char,
+                    orig.startLineNumber, orig.startColumn,
+                    orig.endLineNumber, orig.endColumn,
+                    lines_from, 'DiffText')
+                  highlight_range(M.buf_to, namespaces.char,
+                    mod.startLineNumber, mod.startColumn,
+                    mod.endLineNumber, mod.endColumn,
+                    lines_to, 'DiffText')
+                end
+              end
+            end
+          end
+        end
+
         -- Add a virtual-text marker pointing to the counterpart location.
         if orig_start >= 1 and orig_start <= #lines_from then
           api.nvim_buf_set_extmark(M.buf_from, namespaces.move, orig_start - 1, 0, {
