@@ -30,6 +30,7 @@ last code line of that block to select it.
 | `05_histogram.js` | Repeated lines (`}`, blank lines) — histogram vs patience | fallback diff (no Node.js) |
 | `06_long_line.rb` | Wide, (almost) single-line lists — multiple mid-line edits | default settings |
 | `07_inline_move.rb` | Reordering *within* a single line (intra-line move) | default settings |
+| `08_tall_wide.rb` | Tall *and* wide list — scroll vertically/horizontally to feel window sync | default settings |
 | `demo.rb` | ~10-item Ruby list where a few entries move/change | default; also try `compute_moves` |
 
 ## Recommended setup to see everything
@@ -53,3 +54,8 @@ Note on `07_inline_move.rb`: move detection (`compute_moves`) works at the
 move. Instead the reordered text shows up as character-level delete (on the
 FROM side) and add (on the TO side) — which is still exactly what you want to
 see for an intra-line reorder.
+
+Note on `08_tall_wide.rb`: it has 80 records, each on one ~190-column line,
+with a handful of edits scattered top to bottom. Open the diff and scroll
+down (`<C-d>`/`j`) and across (`zl`/`l` with `set nowrap`) — both the From and
+To windows move together when `diff.sync_scroll` is on (the default).
