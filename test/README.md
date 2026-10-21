@@ -9,7 +9,7 @@ and `>>>>>>> TO`) live in the same file, like an unresolved merge conflict.
 
 ## How to run a fixture
 
-1. Open the file, e.g. `:e test/demo.js`.
+1. Open the file, e.g. `:e test/demo.rb`.
 2. Select the **FROM** block — the lines between `<<<<<<< FROM` and `=======`
    (exclude the marker lines) — in visual mode, then run `:PartialDiffFrom`.
 3. Select the **TO** block — the lines between `=======` and `>>>>>>> TO`
@@ -28,7 +28,7 @@ last code line of that block to select it.
 | `03_moves.js` | **Move detection** — a block is moved, not changed | `diff.compute_moves = true` |
 | `04_whitespace.js` | **Trim-whitespace option** — indentation-only changes | toggle `diff.ignore_trim_whitespace` |
 | `05_histogram.js` | Repeated lines (`}`, blank lines) — histogram vs patience | fallback diff (no Node.js) |
-| `demo.js` | Recreation of the README demo (JS refactor) | default; also try `compute_moves` |
+| `demo.rb` | ~10-item Ruby list where a few entries move/change | default; also try `compute_moves` |
 
 ## Recommended setup to see everything
 
