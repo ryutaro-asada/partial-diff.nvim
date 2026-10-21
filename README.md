@@ -62,6 +62,10 @@ require('partial-diff').setup({
     -- Applies to the vscode-diff path; the built-in diff fallback already
     -- syncs scrolling on its own.
     sync_scroll = true,
+    -- When sync_scroll is on, also turn off 'wrap' in both windows so that
+    -- horizontal scrolling actually happens (and stays mirrored). Set to
+    -- false to keep wrap at the cost of no horizontal sync.
+    sync_scroll_nowrap = true,
     -- diffopt used for the built-in Neovim diff fallback (when Node.js /
     -- vscode-diff are unavailable). Defaults to the histogram algorithm with
     -- linematch for cleaner results on refactored code.

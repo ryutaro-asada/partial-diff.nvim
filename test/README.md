@@ -57,5 +57,6 @@ see for an intra-line reorder.
 
 Note on `08_tall_wide.rb`: it has 80 records, each on one ~190-column line,
 with a handful of edits scattered top to bottom. Open the diff and scroll
-down (`<C-d>`/`j`) and across (`zl`/`l` with `set nowrap`) — both the From and
-To windows move together when `diff.sync_scroll` is on (the default).
+down (`<C-d>`/`j`) and across (`zl`/`l`) — both the From and To windows move
+together when `diff.sync_scroll` is on (the default). Horizontal sync needs
+`wrap` off, which the plugin sets automatically via `sync_scroll_nowrap`.

@@ -29,6 +29,10 @@ M.diff = {
   -- Applies to the vscode-diff path; the built-in diff fallback already
   -- syncs scrolling on its own.
   sync_scroll = true,
+  -- When sync_scroll is on, also turn off 'wrap' in both windows so that
+  -- horizontal scrolling actually happens (and stays mirrored). Set to
+  -- false to keep your wrap setting at the cost of no horizontal sync.
+  sync_scroll_nowrap = true,
   -- diffopt used for the built-in Neovim diff fallback.
   fallback_diffopt =
   "internal,filler,closeoff,hiddenoff,algorithm:histogram,linematch:60,context:3,indent-heuristic",
@@ -529,15 +533,25 @@ M.enable_scroll_sync = function()
     return
   end
 
-  -- scrollbind needs 'ver' in scrollopt for vertical sync.
+  -- scrollbind needs 'ver' in scrollopt for vertical sync and 'hor' for
+  -- horizontal sync. Ensure both are present.
   M.original_scrollopt = vim.o.scrollopt
-  if not string.find(vim.o.scrollopt, 'ver') then
-    vim.o.scrollopt = (vim.o.scrollopt == '' and 'ver') or (vim.o.scrollopt .. ',ver')
+  local function ensure_scrollopt(flag)
+    if not string.find(vim.o.scrollopt, flag) then
+      vim.o.scrollopt = (vim.o.scrollopt == '' and flag) or (vim.o.scrollopt .. ',' .. flag)
+    end
   end
+  ensure_scrollopt('ver')
+  ensure_scrollopt('hor')
 
   for _, win in ipairs({ M.win_from, M.win_to }) do
     vim.wo[win].scrollbind = true
     vim.wo[win].cursorbind = true
+    -- Horizontal scrollbind only has an effect when lines are not wrapped;
+    -- with 'wrap' on there is no horizontal scroll to mirror.
+    if M.diff.sync_scroll_nowrap then
+      vim.wo[win].wrap = false
+    end
   end
 
   -- Align both windows to the top and resync their scroll positions.
