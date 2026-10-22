@@ -694,13 +694,20 @@ M.close_view = function()
     else
       -- The diff tab is the only tab left: close its extra windows, and swap
       -- the last one to an empty buffer instead of closing it (closing the
-      -- last window is an error).
+      -- last window is an error). That window stays around as a normal
+      -- window, so undo the diff-view window options we set on it.
       for _, win in ipairs({ M.win_to, M.win_from }) do
         if win and api.nvim_win_is_valid(win) then
           if #api.nvim_tabpage_list_wins(M.tab) > 1 then
             api.nvim_win_close(win, true)
           else
-            api.nvim_win_call(win, function() vim.cmd('enew') end)
+            api.nvim_win_call(win, function()
+              vim.cmd('enew')
+              vim.cmd('diffoff')
+            end)
+            vim.wo[win].scrollbind = false
+            vim.wo[win].cursorbind = false
+            vim.wo[win].wrap = vim.go.wrap
           end
         end
       end
