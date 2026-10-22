@@ -127,7 +127,8 @@ describe('apply_diff_highlights', function()
     it_vs('draws moved lines with the move highlight only', function()
       local pd = render('demo.rb', { diff = { compute_moves = true } })
       -- From lines 8-10 (Macchiato, Flat White, Cold Brew) moved without edits
-      for row = 8, 10 do
+      for line = 8, 10 do
+        local row = helpers.row(pd, pd.buf_from, line)
         assert.are.same({ 'PartialDiffLineMove' }, helpers.groups_on_row(pd.buf_from, ns.move, row))
         assert.are.same({}, helpers.groups_on_row(pd.buf_from, ns.line, row))
         assert.are.same({}, helpers.groups_on_row(pd.buf_from, ns.char, row))
@@ -137,15 +138,17 @@ describe('apply_diff_highlights', function()
     it_vs('still shows edits inside a moved block', function()
       local pd = render('demo.rb', { diff = { compute_moves = true } })
       -- From line 11 (Affogato) moved and was edited
-      assert.are.same({ 'PartialDiffLineMove' }, helpers.groups_on_row(pd.buf_from, ns.move, 11))
-      assert.is_true(#helpers.groups_on_row(pd.buf_from, ns.char, 11) > 0)
+      local row = helpers.row(pd, pd.buf_from, 11)
+      assert.are.same({ 'PartialDiffLineMove' }, helpers.groups_on_row(pd.buf_from, ns.move, row))
+      assert.is_true(#helpers.groups_on_row(pd.buf_from, ns.char, row) > 0)
     end)
 
     it_vs('keeps regular highlights for edits outside the move', function()
       local pd = render('demo.rb', { diff = { compute_moves = true } })
       -- From line 3 (Espresso price) changed in place
-      assert.are.same({ 'PartialDiffLineChange' }, helpers.groups_on_row(pd.buf_from, ns.line, 3))
-      assert.is_true(#helpers.groups_on_row(pd.buf_from, ns.char, 3) > 0)
+      local row = helpers.row(pd, pd.buf_from, 3)
+      assert.are.same({ 'PartialDiffLineChange' }, helpers.groups_on_row(pd.buf_from, ns.line, row))
+      assert.is_true(#helpers.groups_on_row(pd.buf_from, ns.char, row) > 0)
     end)
 
     it_vs('adds move markers pointing to the counterpart line', function()

@@ -58,6 +58,10 @@ require('partial-diff').setup({
     -- pointing to their counterpart location, instead of being shown as a
     -- change.
     compute_moves = false,
+    -- Align corresponding lines between From and To by inserting filler
+    -- rows (like diff mode), so both windows scroll in lockstep. The number
+    -- column shows original line numbers (blank on filler rows).
+    align = true,
     -- Keep the From/To windows scroll- and cursor-synced (like diff mode).
     -- Applies to the vscode-diff path; the built-in diff fallback already
     -- syncs scrolling on its own.
@@ -99,7 +103,10 @@ require('partial-diff').setup({
     line_move = {
       bg = '#2d3a5a',
       fg = '#78a9ff',
-    }
+    },
+    -- Highlight for filler rows inserted by diff.align (links to DiffDelete
+    -- by default, like diff mode)
+    filler = 'DiffDelete',
   }
 })
 ```
