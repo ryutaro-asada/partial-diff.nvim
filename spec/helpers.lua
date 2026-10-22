@@ -76,7 +76,10 @@ function M.spans(buf, ns)
   local out = {}
   for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
     local row, col, d = m[2], m[3], m[4]
-    if d.hl_group then
+    if d.line_hl_group then
+      -- full-line highlight
+      out[#out + 1] = { row = row + 1, text = lines[row + 1] or '', group = d.line_hl_group, line = true }
+    elseif d.hl_group then
       local end_col = d.end_col or col
       local text
       if (d.end_row or row) == row then
@@ -94,8 +97,9 @@ end
 function M.groups_on_row(buf, ns, row)
   local groups = {}
   for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, { row - 1, 0 }, { row - 1, -1 }, { details = true })) do
-    if m[4].hl_group then
-      groups[#groups + 1] = m[4].hl_group
+    local group = m[4].line_hl_group or m[4].hl_group
+    if group then
+      groups[#groups + 1] = group
     end
   end
   return groups

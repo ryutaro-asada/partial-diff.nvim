@@ -238,6 +238,9 @@ M.apply_diff_highlights = function(lines_from, lines_to)
     if M.debug then
       M.log("VSCode diff failed, falling back to Neovim diff")
     end
+    -- Use the same diffopt as the regular fallback path.
+    M.original_diffopt = M.original_diffopt or vim.o.diffopt
+    vim.o.diffopt = M.diff.fallback_diffopt
     vim.wo[M.win_from].diff = true
     vim.wo[M.win_to].diff = true
     vim.cmd('diffupdate')
@@ -302,12 +305,10 @@ M.apply_diff_highlights = function(lines_from, lines_to)
       return
     end
 
-    local line_content = lines[line_num + 1]
+    -- line_hl_group colors the whole screen line (like diff mode), so empty
+    -- lines and the area past the end of the text are highlighted too.
     api.nvim_buf_set_extmark(buf, ns, line_num, 0, {
-      end_row = line_num,
-      end_col = #line_content,
-      hl_group = hl_group,
-      hl_mode = 'combine',
+      line_hl_group = hl_group,
       priority = 100,
     })
   end
@@ -409,15 +410,24 @@ M.apply_diff_highlights = function(lines_from, lines_to)
     local mod_start = change.modifiedRange.startLineNumber
     local mod_end = change.modifiedRange.endLineNumberExclusive - 1
 
+    -- A block with an empty original range is a pure insertion (only the To
+    -- side has lines); an empty modified range is a pure deletion.
+    local from_group, to_group = 'DiffChange', 'DiffChange'
+    if orig_start > orig_end then
+      to_group = 'DiffAdd'
+    elseif mod_start > mod_end then
+      from_group = 'DiffDelete'
+    end
+
     for line = orig_start, orig_end do
       if not moved_from[line] then
-        highlight_line(M.buf_from, namespaces.line, line - 1, lines_from, 'DiffChange')
+        highlight_line(M.buf_from, namespaces.line, line - 1, lines_from, from_group)
       end
     end
 
     for line = mod_start, mod_end do
       if not moved_to[line] then
-        highlight_line(M.buf_to, namespaces.line, line - 1, lines_to, 'DiffChange')
+        highlight_line(M.buf_to, namespaces.line, line - 1, lines_to, to_group)
       end
     end
 
