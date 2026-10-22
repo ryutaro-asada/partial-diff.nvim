@@ -169,6 +169,20 @@ Without this, the plugin will fall back to Neovim's built-in diff.
 
 If you have any suggestions or improvements, feel free to open an issue or submit a pull request.
 
+### Running the tests
+
+The test suite lives in `spec/` and runs in headless Neovim with
+[plenary.nvim](https://github.com/nvim-lua/plenary.nvim). Node.js and npm are
+needed for the vscode-diff tests.
+
+```sh
+make test
+```
+
+`make test` fetches a pinned plenary.nvim into `.deps/` and installs the npm
+dependencies on first run. The manual fixtures in `test/` are reused as test
+inputs.
+
 ## License
 
 This project is licensed under the MIT License.
