@@ -12,6 +12,10 @@ M.tab = nil
 M.augroup = nil
 -- Filetype of the buffer the From range was taken from.
 M.from_ft = nil
+-- Per diff buffer: buffer row -> original line number (nil for filler rows),
+-- used by the line-number column. See M.line_label().
+M.row_lines = {}
+M.lnum_width = 3
 
 M.original_diffopt = nil
 
@@ -30,6 +34,10 @@ M.diff = {
   -- Detect moved code blocks (vscode-diff). Enables the `moves` output and
   -- a dedicated "moved" highlight/marker instead of change highlighting.
   compute_moves = false,
+  -- Align corresponding lines between From and To by inserting filler rows
+  -- (like diff mode), so both windows scroll in lockstep. Applies to the
+  -- vscode-diff path.
+  align = true,
   -- Keep the From/To windows scroll- and cursor-synced (like diff mode).
   -- Applies to the vscode-diff path; the built-in diff fallback already
   -- syncs scrolling on its own.
@@ -52,6 +60,7 @@ M.highlights = {
   char_add = { bg = '#2d5a2d', fg = '#a9dc76', link = nil },
   char_delete = { bg = '#5a2d2d', fg = '#ff6188', link = nil },
   line_move = { bg = '#2d3a5a', fg = '#78a9ff', link = nil },
+  filler = { bg = nil, fg = nil, link = 'DiffDelete' },
 }
 
 -- Setup highlight groups based on user configuration
@@ -64,6 +73,7 @@ M.setup_highlights = function()
     { name = 'PartialDiffCharAdd',    config = M.highlights.char_add },
     { name = 'PartialDiffCharDelete', config = M.highlights.char_delete },
     { name = 'PartialDiffLineMove',   config = M.highlights.line_move },
+    { name = 'PartialDiffFiller',     config = M.highlights.filler },
   }
 
   for _, group in ipairs(groups) do
@@ -224,6 +234,74 @@ M.run_vscode_diff = function(lines_from, lines_to, options)
   end
 end
 
+-- Build row-aligned copies of both sides from vscode-diff's `changes`.
+-- Unchanged lines are paired 1:1; within a change block the shorter side is
+-- padded with filler rows at the end of the block, so line N on the left
+-- always corresponds to line N on the right (like diff mode's filler lines).
+--
+-- Returns a table with:
+--   from, to             aligned buffer contents (filler rows are "")
+--   from_rows, to_rows   original line -> 1-based buffer row
+--   from_filler, to_filler  list of 1-based buffer rows that are filler
+M.align_lines = function(lines_from, lines_to, changes)
+  local r = { from = {}, to = {}, from_rows = {}, to_rows = {}, from_filler = {}, to_filler = {} }
+
+  -- Emit one aligned row; `fl` / `tl` are original line numbers or nil.
+  local function emit(fl, tl)
+    r.from[#r.from + 1] = fl and lines_from[fl] or ''
+    r.to[#r.to + 1] = tl and lines_to[tl] or ''
+    local row = #r.from
+    if fl then r.from_rows[fl] = row else r.from_filler[#r.from_filler + 1] = row end
+    if tl then r.to_rows[tl] = row else r.to_filler[#r.to_filler + 1] = row end
+  end
+
+  -- Emit original lines [i, i_end) and [j, j_end) side by side, padding the
+  -- shorter side with filler rows.
+  local function emit_block(i, i_end, j, j_end)
+    local n = math.max(i_end - i, j_end - j)
+    for k = 0, n - 1 do
+      emit(i + k < i_end and i + k or nil, j + k < j_end and j + k or nil)
+    end
+  end
+
+  local i, j = 1, 1
+  for _, c in ipairs(changes or {}) do
+    local os, oe = c.originalRange.startLineNumber, c.originalRange.endLineNumberExclusive
+    local ms, me = c.modifiedRange.startLineNumber, c.modifiedRange.endLineNumberExclusive
+    emit_block(i, os, j, ms) -- unchanged lines before the block
+    emit_block(os, oe, ms, me) -- the change block itself
+    i, j = oe, me
+  end
+  emit_block(i, #lines_from + 1, j, #lines_to + 1) -- unchanged tail
+
+  return r
+end
+
+-- Text for the line-number column of a diff window: the original line
+-- number of `row` in `buf`, or blank for filler rows.
+M.line_label = function(buf, row)
+  local map = M.row_lines[buf]
+  local line
+  if map then
+    line = map[row]
+  else
+    line = row
+  end
+  return string.format('%' .. M.lnum_width .. 's', line and tostring(line) or '')
+end
+
+-- 'statuscolumn' callback for the diff windows. It runs inside a %{}
+-- item, where the window being drawn is temporarily the current window
+-- (g:statusline_winid is only set for %! expressions).
+M.statuscolumn = function()
+  if vim.v.virtnum ~= 0 then
+    return string.rep(' ', M.lnum_width)
+  end
+  local win = vim.g.statusline_winid
+  local buf = (win and api.nvim_win_is_valid(win)) and api.nvim_win_get_buf(win) or api.nvim_get_current_buf()
+  return M.line_label(buf, vim.v.lnum)
+end
+
 M.apply_diff_highlights = function(lines_from, lines_to)
   if not M.buf_from or not M.buf_to then
     return false
@@ -255,11 +333,62 @@ M.apply_diff_highlights = function(lines_from, lines_to)
     char = api.nvim_create_namespace('partial_diff_char'),
     indent = api.nvim_create_namespace('partial_diff_indent'),
     move = api.nvim_create_namespace('partial_diff_move'),
+    filler = api.nvim_create_namespace('partial_diff_filler'),
   }
 
   for _, ns in pairs(namespaces) do
     api.nvim_buf_clear_namespace(M.buf_from, ns, 0, -1)
     api.nvim_buf_clear_namespace(M.buf_to, ns, 0, -1)
+  end
+
+  -- Row alignment. All highlights below are computed on original line
+  -- numbers and placed via these maps (original line -> 1-based buffer row).
+  local from_rows, to_rows = {}, {}
+  M.row_lines[M.buf_from] = nil
+  M.row_lines[M.buf_to] = nil
+  if M.diff.align then
+    local aligned = M.align_lines(lines_from, lines_to, result.changes)
+    api.nvim_buf_set_lines(M.buf_from, 0, -1, false, aligned.from)
+    api.nvim_buf_set_lines(M.buf_to, 0, -1, false, aligned.to)
+    from_rows, to_rows = aligned.from_rows, aligned.to_rows
+
+    -- Draw filler rows like diff mode: filled with the 'fillchars' diff
+    -- character, fixed to the window so it doesn't scroll horizontally.
+    local fill = (vim.opt.fillchars:get().diff or '-'):rep(500)
+    for _, side in ipairs({ { M.buf_from, aligned.from_filler }, { M.buf_to, aligned.to_filler } }) do
+      for _, row in ipairs(side[2]) do
+        api.nvim_buf_set_extmark(side[1], namespaces.filler, row - 1, 0, {
+          line_hl_group = 'PartialDiffFiller',
+          virt_text = { { fill, 'PartialDiffFiller' } },
+          virt_text_win_col = 0,
+          priority = 100,
+        })
+      end
+    end
+
+    -- Show original line numbers (blank on filler rows) in windows that
+    -- display line numbers.
+    local function invert(map)
+      local inv = {}
+      for line, row in pairs(map) do inv[row] = line end
+      return inv
+    end
+    M.row_lines[M.buf_from] = invert(from_rows)
+    M.row_lines[M.buf_to] = invert(to_rows)
+    M.lnum_width = math.max(#tostring(#lines_from), #tostring(#lines_to),
+      vim.wo[M.win_from].numberwidth - 1)
+    for _, win in ipairs({ M.win_from, M.win_to }) do
+      if vim.wo[win].number or vim.wo[win].relativenumber then
+        vim.wo[win].statuscolumn = "%s%#LineNr#%{v:lua.require'partial-diff'.statuscolumn()} "
+      end
+    end
+  else
+    for l = 1, #lines_from do from_rows[l] = l end
+    for l = 1, #lines_to do to_rows[l] = l end
+  end
+
+  local function rows_for(buf)
+    return buf == M.buf_from and from_rows or to_rows
   end
 
   if M.debug then
@@ -301,13 +430,14 @@ M.apply_diff_highlights = function(lines_from, lines_to)
     }
     hl_group = group_map[hl_group] or hl_group
 
-    if line_num < 0 or line_num >= #lines then
+    local row = rows_for(buf)[line_num + 1]
+    if not row then
       return
     end
 
     -- line_hl_group colors the whole screen line (like diff mode), so empty
     -- lines and the area past the end of the text are highlighted too.
-    api.nvim_buf_set_extmark(buf, ns, line_num, 0, {
+    api.nvim_buf_set_extmark(buf, ns, row - 1, 0, {
       line_hl_group = hl_group,
       priority = 100,
     })
@@ -347,10 +477,11 @@ M.apply_diff_highlights = function(lines_from, lines_to)
         end
 
         if byte_end > byte_start then
+          local row = rows_for(buf)[line] - 1
           hl.range(
             buf, ns, hl_group,
-            { line - 1, byte_start },
-            { line - 1, byte_end },
+            { row, byte_start },
+            { row, byte_end },
             { regtype = 'v', inclusive = false, priority = 200 }
           )
         end
@@ -478,15 +609,16 @@ M.apply_diff_highlights = function(lines_from, lines_to)
         end
 
         -- Add a virtual-text marker pointing to the counterpart location.
-        if orig_start >= 1 and orig_start <= #lines_from then
-          api.nvim_buf_set_extmark(M.buf_from, namespaces.move, orig_start - 1, 0, {
+        -- The text uses original line numbers (as shown in the number column).
+        if from_rows[orig_start] then
+          api.nvim_buf_set_extmark(M.buf_from, namespaces.move, from_rows[orig_start] - 1, 0, {
             virt_text = { { string.format(' ↓ moved to line %d', mod_start), 'PartialDiffLineMove' } },
             virt_text_pos = 'eol',
             priority = 250,
           })
         end
-        if mod_start >= 1 and mod_start <= #lines_to then
-          api.nvim_buf_set_extmark(M.buf_to, namespaces.move, mod_start - 1, 0, {
+        if to_rows[mod_start] then
+          api.nvim_buf_set_extmark(M.buf_to, namespaces.move, to_rows[mod_start] - 1, 0, {
             virt_text = { { string.format(' ↑ moved from line %d', orig_start), 'PartialDiffLineMove' } },
             virt_text_pos = 'eol',
             priority = 250,
@@ -718,6 +850,7 @@ M.close_view = function()
             vim.wo[win].scrollbind = false
             vim.wo[win].cursorbind = false
             vim.wo[win].wrap = vim.go.wrap
+            vim.wo[win].statuscolumn = vim.go.statuscolumn
           end
         end
       end
@@ -736,6 +869,7 @@ M.close_view = function()
   end
   M.buf_from = nil
   M.buf_to = nil
+  M.row_lines = {}
 end
 
 -- :PartialDiffDelete — close the view and forget the marked ranges.

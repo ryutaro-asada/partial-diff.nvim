@@ -93,6 +93,21 @@ function M.spans(buf, ns)
   return out
 end
 
+--- Buffer row (1-based) that shows original line `line` of `buf`'s side.
+--- Accounts for filler rows inserted by row alignment.
+function M.row(pd, buf, line)
+  local map = pd.row_lines[buf]
+  if not map then
+    return line
+  end
+  for row, l in pairs(map) do
+    if l == line then
+      return row
+    end
+  end
+  error(('original line %d not found in buffer %d'):format(line, buf))
+end
+
 --- Highlight groups present on a 1-based `row` of `buf` in namespace `ns`.
 function M.groups_on_row(buf, ns, row)
   local groups = {}
