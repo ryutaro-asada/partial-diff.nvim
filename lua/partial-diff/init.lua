@@ -7,6 +7,11 @@ M.buf_from = nil
 M.buf_to = nil
 M.win_from = nil
 M.win_to = nil
+-- Tabpage handle of the open diff view, and the augroup that cleans it up.
+M.tab = nil
+M.augroup = nil
+-- Filetype of the buffer the From range was taken from.
+M.from_ft = nil
 
 M.original_diffopt = nil
 
@@ -307,7 +312,13 @@ M.apply_diff_highlights = function(lines_from, lines_to)
     })
   end
 
-  local function highlight_range(buf, ns, start_line, start_col, end_line, end_col, lines, hl_group)
+  -- vim.hl is the 0.11+ name; 0.10 only has vim.highlight.
+  local hl = vim.hl or vim.highlight
+
+  -- Highlight a (possibly multi-line) character range. The range is drawn
+  -- line by line so that lines listed in `skip` (1-based line -> true) can be
+  -- left alone, e.g. lines that belong to a detected move.
+  local function highlight_range(buf, ns, start_line, start_col, end_line, end_col, lines, hl_group, skip)
     -- Map diff highlight groups to our custom groups
     local group_map = {
       DiffText = 'PartialDiffCharChange',
@@ -323,40 +334,72 @@ M.apply_diff_highlights = function(lines_from, lines_to)
       return
     end
 
-    if start_line == end_line then
-      local line_content = lines[start_line]
-      local byte_start = char_to_byte_offset(line_content, start_col)
-      local byte_end = char_to_byte_offset(line_content, end_col)
+    for line = start_line, end_line do
+      if not (skip and skip[line]) then
+        local content = lines[line]
+        local byte_start = (line == start_line) and char_to_byte_offset(content, start_col) or 0
+        local byte_end = (line == end_line) and char_to_byte_offset(content, end_col) or #content
 
-      if M.debug then
-        local highlight_text = line_content:sub(byte_start + 1, byte_end)
-        M.log(string.format("  %s: line %d, chars [%d-%d], bytes [%d-%d], text: '%s'",
-          hl_group, start_line - 1, start_col, end_col, byte_start, byte_end, highlight_text))
+        if M.debug then
+          M.log(string.format("  %s: line %d, bytes [%d-%d], text: '%s'",
+            hl_group, line - 1, byte_start, byte_end, content:sub(byte_start + 1, byte_end)))
+        end
+
+        if byte_end > byte_start then
+          hl.range(
+            buf, ns, hl_group,
+            { line - 1, byte_start },
+            { line - 1, byte_end },
+            { regtype = 'v', inclusive = false, priority = 200 }
+          )
+        end
       end
+    end
+  end
 
-      vim.hl.range(
-        buf, ns, hl_group,
-        { start_line - 1, byte_start },
-        { start_line - 1, byte_end },
-        { regtype = 'v', inclusive = false, priority = 200 }
-      )
-    else
-      if M.debug then
-        M.log(string.format("  %s: multi-line range from line %d to %d", hl_group, start_line - 1, end_line - 1))
+  -- Render one character-level change (an `innerChanges` entry).
+  local function render_inner(inner, skip_from, skip_to)
+    local orig = inner.originalRange
+    local mod = inner.modifiedRange
+
+    local is_empty_orig = (orig.startColumn == orig.endColumn) and
+        (orig.startLineNumber == orig.endLineNumber)
+    local is_empty_mod = (mod.startColumn == mod.endColumn) and
+        (mod.startLineNumber == mod.endLineNumber)
+
+    if is_empty_orig and not is_empty_mod then
+      highlight_range(M.buf_to, namespaces.char,
+        mod.startLineNumber, mod.startColumn, mod.endLineNumber, mod.endColumn,
+        lines_to, 'DiffAdd', skip_to)
+    elseif not is_empty_orig and is_empty_mod then
+      highlight_range(M.buf_from, namespaces.char,
+        orig.startLineNumber, orig.startColumn, orig.endLineNumber, orig.endColumn,
+        lines_from, 'DiffDelete', skip_from)
+    elseif not is_empty_orig and not is_empty_mod then
+      highlight_range(M.buf_from, namespaces.char,
+        orig.startLineNumber, orig.startColumn, orig.endLineNumber, orig.endColumn,
+        lines_from, 'DiffText', skip_from)
+      highlight_range(M.buf_to, namespaces.char,
+        mod.startLineNumber, mod.startColumn, mod.endLineNumber, mod.endColumn,
+        lines_to, 'DiffText', skip_to)
+    end
+  end
+
+  -- Lines covered by a detected move. The regular change list still reports
+  -- these lines as deleted/inserted; we skip them there and let the move
+  -- renderer below draw them instead, so the move highlight stays visible.
+  local moved_from, moved_to = {}, {}
+  if M.diff.compute_moves and result.moves then
+    for _, move in ipairs(result.moves) do
+      local lrm = move.lineRangeMapping
+      if lrm and lrm.original and lrm.modified then
+        for l = lrm.original.startLineNumber, lrm.original.endLineNumberExclusive - 1 do
+          moved_from[l] = true
+        end
+        for l = lrm.modified.startLineNumber, lrm.modified.endLineNumberExclusive - 1 do
+          moved_to[l] = true
+        end
       end
-
-      local start_line_content = lines[start_line]
-      local end_line_content = lines[end_line]
-
-      local byte_start = char_to_byte_offset(start_line_content, start_col)
-      local byte_end = char_to_byte_offset(end_line_content, end_col)
-
-      vim.hl.range(
-        buf, ns, hl_group,
-        { start_line - 1, byte_start },
-        { end_line - 1, byte_end },
-        { regtype = 'v', inclusive = false, priority = 200 }
-      )
     end
   end
 
@@ -367,11 +410,15 @@ M.apply_diff_highlights = function(lines_from, lines_to)
     local mod_end = change.modifiedRange.endLineNumberExclusive - 1
 
     for line = orig_start, orig_end do
-      highlight_line(M.buf_from, namespaces.line, line - 1, lines_from, 'DiffChange')
+      if not moved_from[line] then
+        highlight_line(M.buf_from, namespaces.line, line - 1, lines_from, 'DiffChange')
+      end
     end
 
     for line = mod_start, mod_end do
-      highlight_line(M.buf_to, namespaces.line, line - 1, lines_to, 'DiffChange')
+      if not moved_to[line] then
+        highlight_line(M.buf_to, namespaces.line, line - 1, lines_to, 'DiffChange')
+      end
     end
 
     if change.innerChanges and #change.innerChanges > 0 then
@@ -380,34 +427,7 @@ M.apply_diff_highlights = function(lines_from, lines_to)
       end
 
       for _, inner in ipairs(change.innerChanges) do
-        local orig = inner.originalRange
-        local mod = inner.modifiedRange
-
-        local is_empty_orig = (orig.startColumn == orig.endColumn) and
-            (orig.startLineNumber == orig.endLineNumber)
-        local is_empty_mod = (mod.startColumn == mod.endColumn) and
-            (mod.startLineNumber == mod.endLineNumber)
-
-        if is_empty_orig and not is_empty_mod then
-          highlight_range(M.buf_to, namespaces.char,
-            mod.startLineNumber, mod.startColumn,
-            mod.endLineNumber, mod.endColumn,
-            lines_to, 'DiffAdd')
-        elseif not is_empty_orig and is_empty_mod then
-          highlight_range(M.buf_from, namespaces.char,
-            orig.startLineNumber, orig.startColumn,
-            orig.endLineNumber, orig.endColumn,
-            lines_from, 'DiffDelete')
-        elseif not is_empty_orig and not is_empty_mod then
-          highlight_range(M.buf_from, namespaces.char,
-            orig.startLineNumber, orig.startColumn,
-            orig.endLineNumber, orig.endColumn,
-            lines_from, 'DiffText')
-          highlight_range(M.buf_to, namespaces.char,
-            mod.startLineNumber, mod.startColumn,
-            mod.endLineNumber, mod.endColumn,
-            lines_to, 'DiffText')
-        end
+        render_inner(inner, moved_from, moved_to)
       end
     elseif M.debug then
       -- No inner changes: the line-level highlights applied above are sufficient.
@@ -441,40 +461,9 @@ M.apply_diff_highlights = function(lines_from, lines_to)
         -- `move.changes` (with character-level `innerChanges`). Render them on
         -- top of the move highlight so "moved + modified" is distinguishable
         -- from a pure move.
-        if move.changes and #move.changes > 0 then
-          for _, mchange in ipairs(move.changes) do
-            if mchange.innerChanges and #mchange.innerChanges > 0 then
-              for _, inner in ipairs(mchange.innerChanges) do
-                local orig = inner.originalRange
-                local mod = inner.modifiedRange
-
-                local is_empty_orig = (orig.startColumn == orig.endColumn) and
-                    (orig.startLineNumber == orig.endLineNumber)
-                local is_empty_mod = (mod.startColumn == mod.endColumn) and
-                    (mod.startLineNumber == mod.endLineNumber)
-
-                if is_empty_orig and not is_empty_mod then
-                  highlight_range(M.buf_to, namespaces.char,
-                    mod.startLineNumber, mod.startColumn,
-                    mod.endLineNumber, mod.endColumn,
-                    lines_to, 'DiffAdd')
-                elseif not is_empty_orig and is_empty_mod then
-                  highlight_range(M.buf_from, namespaces.char,
-                    orig.startLineNumber, orig.startColumn,
-                    orig.endLineNumber, orig.endColumn,
-                    lines_from, 'DiffDelete')
-                elseif not is_empty_orig and not is_empty_mod then
-                  highlight_range(M.buf_from, namespaces.char,
-                    orig.startLineNumber, orig.startColumn,
-                    orig.endLineNumber, orig.endColumn,
-                    lines_from, 'DiffText')
-                  highlight_range(M.buf_to, namespaces.char,
-                    mod.startLineNumber, mod.startColumn,
-                    mod.endLineNumber, mod.endColumn,
-                    lines_to, 'DiffText')
-                end
-              end
-            end
+        for _, mchange in ipairs(move.changes or {}) do
+          for _, inner in ipairs(mchange.innerChanges or {}) do
+            render_inner(inner, nil, nil)
           end
         end
 
@@ -582,6 +571,7 @@ end
 
 M.partial_diff_from = function(start_line, end_line)
   M.from_original = api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
+  M.from_ft = vim.bo.filetype
   M.has_from = true
   print("Stored " .. #M.from_original .. " lines in From buffer")
 end
@@ -596,12 +586,16 @@ M.partial_diff_to = function(start_line, end_line)
     return
   end
 
-  -- Clean up existing diff if present
-  if M.buf_from and api.nvim_buf_is_valid(M.buf_from) then
-    M.partial_diff_delete()
-  end
+  -- Capture the To range from the current buffer before touching any
+  -- windows: closing a previous diff view could change the current buffer.
+  local to_lines = api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
+  local to_ft = vim.bo.filetype
 
-  M.to_original = api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
+  -- Close a previous diff view if one is open. This keeps the marked From
+  -- range (unlike :PartialDiffDelete, which also forgets it).
+  M.close_view()
+
+  M.to_original = to_lines
   print("Stored " .. #M.to_original .. " lines in To buffer")
 
   -- Setup highlights with user configuration
@@ -616,7 +610,7 @@ M.partial_diff_to = function(start_line, end_line)
   api.nvim_buf_set_lines(M.buf_to, 0, -1, false, M.to_original)
 
   vim.cmd('tabnew')
-  local diff_tabpage = api.nvim_get_current_tabpage()
+  M.tab = api.nvim_get_current_tabpage()
 
   api.nvim_set_current_buf(M.buf_from)
   M.win_from = api.nvim_get_current_win()
@@ -633,22 +627,31 @@ M.partial_diff_to = function(start_line, end_line)
   api.nvim_buf_set_name(M.buf_from, "[Partial Diff From]")
   api.nvim_buf_set_name(M.buf_to, "[Partial Diff To]")
 
-  local original_ft = vim.bo.filetype
-  if original_ft and original_ft ~= "" then
-    vim.bo[M.buf_from].filetype = original_ft
-    vim.bo[M.buf_to].filetype = original_ft
+  -- Use the filetypes of the buffers the ranges were taken from, so the diff
+  -- gets syntax highlighting.
+  if M.from_ft and M.from_ft ~= "" then
+    vim.bo[M.buf_from].filetype = M.from_ft
+  end
+  if to_ft ~= "" then
+    vim.bo[M.buf_to].filetype = to_ft
   end
 
-  -- Auto cleanup when tab is closed
+  -- Clean up when the diff tab is closed by any means (:tabclose, :q, ...).
+  -- TabClosed's pattern is a tab *number*, which does not match the tabpage
+  -- handle, so listen to every TabClosed and check whether our tab is gone.
+  -- The closed tab's handle is still valid while TabClosed runs, so the
+  -- check is deferred until after the close has completed.
+  local diff_tab = M.tab
+  M.augroup = api.nvim_create_augroup('PartialDiffCleanup', { clear = true })
   api.nvim_create_autocmd("TabClosed", {
-    pattern = tostring(diff_tabpage),
+    group = M.augroup,
     callback = function()
-      -- Only cleanup if buffers are still valid
-      if M.buf_from and api.nvim_buf_is_valid(M.buf_from) then
-        M.partial_diff_delete()
-      end
+      vim.schedule(function()
+        if M.tab == diff_tab and not api.nvim_tabpage_is_valid(diff_tab) then
+          M.partial_diff_delete()
+        end
+      end)
     end,
-    once = true,
   })
 
   if M.check_node() and M.check_vscode_diff() then
@@ -664,8 +667,15 @@ M.partial_diff_to = function(start_line, end_line)
   end
 end
 
-M.partial_diff_delete = function()
+-- Close the diff view (its tab, windows and scratch buffers) and restore the
+-- global options we changed. Keeps the marked From range.
+M.close_view = function()
   M.close_log()
+
+  if M.augroup then
+    pcall(api.nvim_del_augroup_by_id, M.augroup)
+    M.augroup = nil
+  end
 
   if M.original_diffopt then
     vim.o.diffopt = M.original_diffopt
@@ -677,36 +687,47 @@ M.partial_diff_delete = function()
     M.original_scrollopt = nil
   end
 
-  -- Close windows and tab
-  if M.win_from and api.nvim_win_is_valid(M.win_from) then
-    local tabs = api.nvim_list_tabpages()
-    if #tabs > 1 then
-      -- Disable autocmd to prevent infinite loop
-      vim.cmd('noautocmd tabclose')
+  -- Close only the diff's own tab, never whichever tab happens to be current.
+  if M.tab and api.nvim_tabpage_is_valid(M.tab) then
+    if #api.nvim_list_tabpages() > 1 then
+      vim.cmd('noautocmd tabclose ' .. api.nvim_tabpage_get_number(M.tab))
     else
-      if api.nvim_win_is_valid(M.win_from) then
-        api.nvim_win_close(M.win_from, true)
-      end
-      if M.win_to and api.nvim_win_is_valid(M.win_to) then
-        api.nvim_win_close(M.win_to, true)
+      -- The diff tab is the only tab left: close its extra windows, and swap
+      -- the last one to an empty buffer instead of closing it (closing the
+      -- last window is an error).
+      for _, win in ipairs({ M.win_to, M.win_from }) do
+        if win and api.nvim_win_is_valid(win) then
+          if #api.nvim_tabpage_list_wins(M.tab) > 1 then
+            api.nvim_win_close(win, true)
+          else
+            api.nvim_win_call(win, function() vim.cmd('enew') end)
+          end
+        end
       end
     end
-    M.win_from = nil
-    M.win_to = nil
   end
+  M.tab = nil
+  M.win_from = nil
+  M.win_to = nil
 
   -- Delete buffers
   if M.buf_from and api.nvim_buf_is_valid(M.buf_from) then
     api.nvim_buf_delete(M.buf_from, { force = true })
-    M.buf_from = nil
   end
   if M.buf_to and api.nvim_buf_is_valid(M.buf_to) then
     api.nvim_buf_delete(M.buf_to, { force = true })
-    M.buf_to = nil
   end
+  M.buf_from = nil
+  M.buf_to = nil
+end
+
+-- :PartialDiffDelete — close the view and forget the marked ranges.
+M.partial_diff_delete = function()
+  M.close_view()
 
   M.from_original = {}
   M.to_original = {}
+  M.from_ft = nil
   M.has_from = false
 end
 
@@ -738,6 +759,11 @@ M.setup = function(opts)
       if M.highlights[key] then
         -- If user provides a table, merge it with defaults
         if type(value) == 'table' then
+          -- Explicit colors/styles must replace the default link; otherwise
+          -- setup_highlights() would apply the link and ignore them.
+          if value.link == nil and next(value) ~= nil then
+            M.highlights[key].link = nil
+          end
           for k, v in pairs(value) do
             M.highlights[key][k] = v
           end
