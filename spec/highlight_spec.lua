@@ -58,6 +58,62 @@ describe('apply_diff_highlights', function()
     assert.are.same({}, helpers.spans(relaxed.buf_to, ns.char))
   end)
 
+  describe('line highlights', function()
+    local function render_lines(from, to)
+      local pd = helpers.fresh_plugin()
+      helpers.open_pair(pd, from, to)
+      assert.is_true(pd.apply_diff_highlights(from, to))
+      return pd
+    end
+
+    it_vs('uses the add group for purely inserted lines', function()
+      local pd = render_lines({ 'a', 'b', 'c' }, { 'a', 'x', 'b', 'c' })
+      assert.are.same({ 'PartialDiffLineAdd' }, helpers.groups_on_row(pd.buf_to, ns.line, 2))
+      assert.are.same({}, helpers.spans(pd.buf_from, ns.line))
+    end)
+
+    it_vs('uses the delete group for purely deleted lines', function()
+      local pd = render_lines({ 'a', 'b', 'c' }, { 'a', 'c' })
+      assert.are.same({ 'PartialDiffLineDelete' }, helpers.groups_on_row(pd.buf_from, ns.line, 2))
+      assert.are.same({}, helpers.spans(pd.buf_to, ns.line))
+    end)
+
+    it_vs('uses the change group on both sides for modified lines', function()
+      local pd = render_lines({ 'a', 'foo', 'c' }, { 'a', 'bar', 'c' })
+      assert.are.same({ 'PartialDiffLineChange' }, helpers.groups_on_row(pd.buf_from, ns.line, 2))
+      assert.are.same({ 'PartialDiffLineChange' }, helpers.groups_on_row(pd.buf_to, ns.line, 2))
+    end)
+
+    it_vs('highlights inserted and deleted empty lines', function()
+      local added = render_lines({ 'a', 'b' }, { 'a', '', 'b' })
+      assert.are.same({ 'PartialDiffLineAdd' }, helpers.groups_on_row(added.buf_to, ns.line, 2))
+
+      local deleted = render_lines({ 'a', '', 'b' }, { 'a', 'b' })
+      assert.are.same({ 'PartialDiffLineDelete' }, helpers.groups_on_row(deleted.buf_from, ns.line, 2))
+    end)
+
+    it_vs('highlights the full line width', function()
+      local pd = render_lines({ 'a', 'foo', 'c' }, { 'a', 'bar', 'c' })
+      local marks = vim.api.nvim_buf_get_extmarks(pd.buf_to, ns.line, 0, -1, { details = true })
+      assert.are.equal(1, #marks)
+      assert.are.equal('PartialDiffLineChange', marks[1][4].line_hl_group)
+      assert.is_nil(marks[1][4].end_col)
+    end)
+  end)
+
+  it('falls back to diff mode with the fallback diffopt when vscode-diff fails', function()
+    local pd = helpers.fresh_plugin()
+    helpers.open_pair(pd, { 'a' }, { 'b' })
+    pd.run_vscode_diff = function() return nil end
+    local diffopt = vim.o.diffopt
+    assert.is_false(pd.apply_diff_highlights({ 'a' }, { 'b' }))
+    assert.is_true(vim.wo[pd.win_from].diff)
+    assert.is_true(vim.wo[pd.win_to].diff)
+    assert.are.equal(pd.diff.fallback_diffopt, vim.o.diffopt)
+    pd.partial_diff_delete()
+    assert.are.equal(diffopt, vim.o.diffopt)
+  end)
+
   it_vs('works without vim.hl (Neovim 0.10)', function()
     local saved = vim.hl
     vim.hl = nil
