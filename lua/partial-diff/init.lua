@@ -435,11 +435,18 @@ M.apply_diff_highlights = function(lines_from, lines_to)
       return
     end
 
-    -- line_hl_group colors the whole screen line (like diff mode), so empty
-    -- lines and the area past the end of the text are highlighted too.
+    -- Highlight the whole screen line (like diff mode): the range covers the
+    -- row up to the start of the next one, and hl_eol extends it past the
+    -- end of the text, so empty lines are highlighted too.
+    -- Don't use line_hl_group here: its background takes precedence over
+    -- the character-level highlights drawn on top of the line.
     api.nvim_buf_set_extmark(buf, ns, row - 1, 0, {
-      line_hl_group = hl_group,
+      end_row = row,
+      end_col = 0,
+      hl_group = hl_group,
+      hl_eol = true,
       priority = 100,
+      strict = false,
     })
   end
 

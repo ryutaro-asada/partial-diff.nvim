@@ -96,8 +96,54 @@ describe('apply_diff_highlights', function()
       local pd = render_lines({ 'a', 'foo', 'c' }, { 'a', 'bar', 'c' })
       local marks = vim.api.nvim_buf_get_extmarks(pd.buf_to, ns.line, 0, -1, { details = true })
       assert.are.equal(1, #marks)
-      assert.are.equal('PartialDiffLineChange', marks[1][4].line_hl_group)
-      assert.is_nil(marks[1][4].end_col)
+      local d = marks[1][4]
+      assert.are.equal('PartialDiffLineChange', d.hl_group)
+      assert.is_true(d.hl_eol)
+      assert.are.same({ 1, 2, 0 }, { marks[1][2], d.end_row, d.end_col })
+    end)
+
+    -- Reads what is actually drawn, so it catches highlights that exist as
+    -- extmarks but are hidden by another highlight.
+    describe('on screen', function()
+      local function bg_at(pd, win, lnum, col)
+        vim.cmd('redraw!')
+        local sp = vim.fn.screenpos(win, lnum, col)
+        return vim.api.nvim__inspect_cell(1, sp.row - 1, sp.col - 1)[2].background
+      end
+
+      before_each(function()
+        vim.o.termguicolors = true
+        vim.api.nvim_set_hl(0, 'PdTestLine', { bg = '#111111' })
+        vim.api.nvim_set_hl(0, 'PdTestChar', { bg = '#222222' })
+      end)
+
+      it_vs('draws character highlights on top of the line highlight', function()
+        local pd = helpers.fresh_plugin({
+          highlights = { line_change = 'PdTestLine', char_change = 'PdTestChar' },
+        })
+        local from, to = { 'a', 'foo bar', 'c' }, { 'a', 'foo baz', 'c' }
+        helpers.open_pair(pd, from, to)
+        pd.setup_highlights()
+        pd.apply_diff_highlights(from, to)
+        assert.are.equal(0x111111, bg_at(pd, pd.win_to, 2, 1)) -- "f": line highlight
+        assert.are.equal(0x222222, bg_at(pd, pd.win_to, 2, 7)) -- "z": char highlight
+      end)
+
+      it_vs('draws the line highlight on empty and past-the-end cells', function()
+        local pd = helpers.fresh_plugin({ highlights = { line_add = 'PdTestLine' } })
+        local from, to = { 'a', 'b' }, { 'a', '', 'b' }
+        helpers.open_pair(pd, from, to)
+        pd.setup_highlights()
+        pd.apply_diff_highlights(from, to)
+        local row = helpers.row(pd, pd.buf_to, 2)
+        vim.cmd('redraw!')
+        local top, left = unpack(vim.fn.win_screenpos(pd.win_to))
+        local textoff = vim.fn.getwininfo(pd.win_to)[1].textoff
+        for _, col in ipairs({ 0, 10 }) do
+          local cell = vim.api.nvim__inspect_cell(1, top - 2 + row, left - 1 + textoff + col)
+          assert.are.equal(0x111111, cell[2].background, 'screen col ' .. col)
+        end
+      end)
     end)
   end)
 
