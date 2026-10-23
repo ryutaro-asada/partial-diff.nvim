@@ -108,6 +108,20 @@ function M.row(pd, buf, line)
   error(('original line %d not found in buffer %d'):format(line, buf))
 end
 
+--- Background color actually drawn on screen in `win`, at buffer row `row`
+--- (1-based) and text column `col` (0-based, counted after the number/sign
+--- columns, so it can point past the end of the text). Redraws first.
+--- Uses nvim__inspect_cell, an internal API; returns nil when no bg is set.
+--- Requires 'nowrap' so that one buffer row is one screen row.
+function M.drawn_bg(win, row, col)
+  assert(not vim.wo[win].wrap, 'drawn_bg needs nowrap in the window')
+  vim.cmd('redraw!')
+  local info = vim.fn.getwininfo(win)[1]
+  local screen_row = info.winrow - 1 + (row - info.topline)
+  local screen_col = info.wincol - 1 + info.textoff + col
+  return vim.api.nvim__inspect_cell(1, screen_row, screen_col)[2].background
+end
+
 --- Highlight groups present on a 1-based `row` of `buf` in namespace `ns`.
 function M.groups_on_row(buf, ns, row)
   local groups = {}
